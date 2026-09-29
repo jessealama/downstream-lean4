@@ -66,13 +66,12 @@ jobs:
         with:
           subrepo: batteries
           build-report-path: ${{ runner.temp }}/report/build-report.json
-          downstream-path: ${{ runner.temp }}/downstream
+          clone-path: ${{ runner.temp }}/downstream
+          method: same-branch
           downstream-token: ${{ steps.app-token-leanprover.outputs.token }}
-          tracking-branch: export/batteries
-          push-repo: leanprover-community/batteries
-          push-branch: nightly-testing
-          push-token: ${{ steps.app-token-leanprover-community.outputs.token }}
-          push-directly: true
+          source-repo: leanprover-community/batteries
+          source-token: ${{ steps.app-token-leanprover-community.outputs.token }}
+          target-branch: nightly-testing
           pr-title: |-
             chore: downstream-lean4 adaptations for ${{ steps.toolchain.outputs.toolchain }}
 
@@ -136,13 +135,12 @@ jobs:
         with:
           subrepo: mathlib4
           build-report-path: ${{ runner.temp }}/report/build-report.json
-          downstream-path: ${{ runner.temp }}/downstream
+          clone-path: ${{ runner.temp }}/downstream
+          method: same-branch
           downstream-token: ${{ steps.app-token-leanprover.outputs.token }}
-          tracking-branch: export/mathlib4
-          push-repo: leanprover-community/mathlib4-nightly-testing
-          push-branch: nightly-testing
-          push-token: ${{ steps.app-token-leanprover-community.outputs.token }}
-          push-directly: true
+          source-repo: leanprover-community/mathlib4-nightly-testing
+          source-token: ${{ steps.app-token-leanprover-community.outputs.token }}
+          target-branch: nightly-testing
           pr-title: |-
             chore: downstream-lean4 adaptations for ${{ steps.toolchain.outputs.toolchain }}
 
@@ -197,12 +195,11 @@ jobs:
         with:
           subrepo: cslib
           build-report-path: ${{ runner.temp }}/report/build-report.json
-          downstream-path: ${{ runner.temp }}/downstream
+          clone-path: ${{ runner.temp }}/downstream
+          method: same-branch
           downstream-token: ${{ steps.app-token.outputs.token }}
-          tracking-branch: export/cslib
-          push-repo: leanprover/cslib
-          push-branch: nightly-testing
-          push-token: ${{ steps.app-token.outputs.token }}
-          push-directly: true
+          source-repo: leanprover/cslib
+          source-token: ${{ steps.app-token.outputs.token }}
+          target-branch: nightly-testing
           pr-title: |-
             chore: downstream-lean4 adaptations for ${{ steps.toolchain.outputs.toolchain }}
