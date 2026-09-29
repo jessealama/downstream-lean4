@@ -3,19 +3,20 @@ import * as fs from "node:fs/promises";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 
+import { getInput, getInputOpt } from "../lib/input";
 import type {
   BuildReport,
   BuildReportPhase,
   BuildReportRepo,
   StatusReport,
 } from "../lib/reports";
-import { abort, assert, getInput, getInputOpt } from "../lib/util";
+import { abort, assert } from "../lib/util";
 
 const buildReportPath = getInput("build-report-path");
 const statusReportPath = getInputOpt("status-report-path");
-const reportType = parseReportType(getInput("report-type"));
-const reportStyle = parseReportStyle(getInput("report-style"));
-const limitedTo = parseLimitedTo(getInputOpt("limited-to"));
+const reportType = getInput("report-type", parseReportType);
+const reportStyle = getInput("report-style", parseReportStyle);
+const limitedTo = getInputOpt("limited-to", parseLimitedTo);
 const runId = getInputOpt("run-id") ?? String(github.context.runId);
 const runAttempt =
   getInputOpt("run-attempt") ?? String(github.context.runAttempt);

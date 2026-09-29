@@ -24328,20 +24328,24 @@ function abort(reason) {
 function assert(condition, message) {
   if (!condition) abort(message);
 }
-function getInput2(name) {
-  return getInput(name, { required: true });
+
+// actions/lib/input.ts
+function getInput2(name, parser) {
+  const value = getInput(name, { required: true });
+  return parser ? parser(value) : value;
 }
-function getInputOpt(name) {
+function getInputOpt(name, parser) {
   const value = getInput(name, { required: false });
-  return value === "" ? null : value;
+  if (value === "") return null;
+  return parser ? parser(value) : value;
 }
 
 // actions/render-report/main.ts
 var buildReportPath = getInput2("build-report-path");
 var statusReportPath = getInputOpt("status-report-path");
-var reportType = parseReportType(getInput2("report-type"));
-var reportStyle = parseReportStyle(getInput2("report-style"));
-var limitedTo = parseLimitedTo(getInputOpt("limited-to"));
+var reportType = getInput2("report-type", parseReportType);
+var reportStyle = getInput2("report-style", parseReportStyle);
+var limitedTo = getInputOpt("limited-to", parseLimitedTo);
 var runId = getInputOpt("run-id") ?? String(context2.runId);
 var runAttempt = getInputOpt("run-attempt") ?? String(context2.runAttempt);
 var outputPath = getInputOpt("output-path");

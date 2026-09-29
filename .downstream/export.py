@@ -4,10 +4,9 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from downstream.updater import Updater
-from downstream.util import fprint, run
+from downstream.util import run
 
 EXIT_EMPTY = 10
-EXIT_REBASE_FAILED = 11
 
 
 class Args:
@@ -17,7 +16,10 @@ class Args:
     branch: str
     ssh: bool
     message: str
-    rebase: bool
+    onto: str | None
+    update_toolchains: bool
+    edit_lakefile: list[list[str]] | None
+    update_manifests: bool
     fail_if_empty: bool
 
 
@@ -53,10 +55,31 @@ def main() -> None:
         help="commit message for the changes",
     )
     parser.add_argument(
-        "-r",
-        "--rebase",
+        "-o",
+        "--onto",
+        type=str,
+        metavar="SHA",
+        help="create the export commit on top of this commit instead of the base commit (must be available locally)",
+    )
+    parser.add_argument(
+        "-t",
+        "--update-toolchains",
         action="store_true",
-        help="try to rebase onto the latest commit of the subrepo's source branch",
+        help="set lean-toolchain files to the downstream toolchain used at time of export",
+    )
+    parser.add_argument(
+        "-e",
+        "--edit-lakefile",
+        nargs=2,
+        action="append",
+        metavar=("PATTERN", "REPLACEMENT"),
+        help="replace a regex in all lakefiles (can be given multiple times)",
+    )
+    parser.add_argument(
+        "-u",
+        "--update-manifests",
+        action="store_true",
+        help="run `lake update` for every manifest",
     )
     parser.add_argument(
         "-E",
@@ -72,13 +95,14 @@ def main() -> None:
 
     run("git", "switch", "--detach", "HEAD")
 
-    if args.rebase:
-        status = updater.update_subrepo(subrepo)
-        if not status.empty:
-            fprint("Failed to rebase the changes.")
-            raise SystemExit(EXIT_REBASE_FAILED)
-
-    committed = updater.split(subrepo, args.message)
+    committed = updater.export(
+        subrepo,
+        args.message,
+        onto=args.onto,
+        update_toolchains=args.update_toolchains,
+        lakefile_edits=[(p, r) for p, r in args.edit_lakefile or []],
+        update_manifests=args.update_manifests,
+    )
 
     if args.push:
         prefix = "git@github.com:" if args.ssh else "https://github.com/"

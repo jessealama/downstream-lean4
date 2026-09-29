@@ -1,94 +1,87 @@
-import * as fs from "node:fs/promises";
-
 import * as core from "@actions/core";
 import * as exec from "@actions/exec";
 import * as github from "@actions/github";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
+import { getInput, getInputOpt, parseBool, parseRepo } from "../lib/input";
 import type { BuildReport } from "../lib/reports";
 import {
   abort,
   assert,
+  captureIn,
   exit,
   findPrFor,
-  getInput,
-  getInputOpt,
-  type Octokit,
-  parseBool,
-  parseRepo,
-  type Repo,
+  Repo,
+  runIn,
 } from "../lib/util";
+
+type Method = "same-branch" | "target-branch";
+
+function parseMethod(input: string): Method {
+  assert(
+    input === "same-branch" || input === "target-branch",
+    `Invalid method "${input}"`,
+  );
+  return input;
+}
+
+function parseLakefileEdits(input: string): [string, string][] {
+  const edits: [string, string][] = [];
+  for (const line of input.split("\n")) {
+    if (line.trim() === "") continue;
+    const i = line.indexOf(" -> ");
+    assert(i >= 0, `Expected "pattern -> replacement", not "${line}"`);
+    edits.push([line.slice(0, i), line.slice(i + " -> ".length)]);
+  }
+  return edits;
+}
 
 const subrepo = getInput("subrepo");
 const buildReportPath = getInput("build-report-path");
-const downstreamRepo = parseRepo(
-  getInputOpt("downstream-repo") ??
-    `${github.context.repo.owner}/${github.context.repo.repo}`,
-);
-const downstreamPath = getInput("downstream-path");
+const clonePath = getInput("clone-path");
+const trackingBranch = getInputOpt("tracking-branch") ?? `export/${subrepo}`;
+const method = getInput("method", parseMethod);
+// Downstream repo
+const downstreamRepo = getInput("downstream-repo", parseRepo);
 const downstreamToken = getInput("downstream-token");
-const trackingBranch = getInput("tracking-branch");
-const pushRepo = parseRepo(getInput("push-repo"));
-const pushBranch = getInput("push-branch");
-const pushToken = getInput("push-token");
-const pushDirectly = parseBool(getInput("push-directly"));
-const targetRepo = getInputOpt("target-repo");
-const targetBranch = getInputOpt("target-branch");
-const targetToken = getInputOpt("target-token");
-const prTitle = getInput("pr-title");
+// Source repo
+const sourceRepo = getInput("source-repo", parseRepo);
+const sourceToken = getInput("source-token");
+// Target repo
+const targetRepo = getInputOpt("target-repo", parseRepo) ?? sourceRepo;
+const targetBranch = getInput("target-branch");
+const targetToken = getInputOpt("target-token") ?? sourceToken;
+// Export PRs
+const pr = getInput("pr", parseBool);
+const prRepo = getInputOpt("pr-repo", parseRepo) ?? targetRepo;
+const prBranch = getInputOpt("pr-branch") ?? `${downstreamRepo.repo}-export`;
+const prToken = getInputOpt("pr-token") ?? targetToken;
+const prTitle =
+  getInputOpt("pr-title") ?? `chore: adaptations from ${downstreamRepo.repo}`;
 const prBody = getInputOpt("pr-body");
+const prExplanation = getInputOpt("pr-explanation");
+// Export options
+const updateToolchains = getInput("update-toolchains", parseBool);
+const lakefileEdits = getInputOpt("lakefile-edits", parseLakefileEdits) ?? [];
+const updateManifests = getInput("update-manifests", parseBool);
 
 core.setSecret(downstreamToken);
-core.setSecret(pushToken);
-if (targetToken !== null) core.setSecret(targetToken);
+core.setSecret(sourceToken);
+core.setSecret(targetToken);
+core.setSecret(prToken);
 
-interface TargetOpts {
-  repo: Repo;
-  branch: string;
-  octo: Octokit;
+const targetOcto = github.getOctokit(targetToken);
+
+const cRun = runIn(clonePath);
+const cCapture = captureIn(clonePath);
+
+function scriptPath(name: string): string {
+  return path.resolve(__dirname, "../../..", name);
 }
 
-// The target-* options are unused when push-directly is set and thus shouldn't
-// be required unconditionally.
-const target: TargetOpts | undefined = (function () {
-  if (pushDirectly) return undefined;
-  assert(targetRepo !== null, "target-repo is required");
-  assert(targetBranch !== null, "target-branch is required");
-  assert(targetToken !== null, "target-token is required");
-  return {
-    repo: parseRepo(targetRepo),
-    branch: targetBranch,
-    octo: github.getOctokit(targetToken),
-  };
-})();
-
-async function dRun(
-  cmd: string,
-  args: string[],
-  options?: exec.ExecOptions,
-): Promise<number> {
-  return await exec.exec(cmd, args, { ...options, cwd: downstreamPath });
-}
-
-async function dCapture(cmd: string, args: string[]): Promise<string> {
-  const { stdout } = await exec.getExecOutput(cmd, args, {
-    cwd: downstreamPath,
-  });
-  return stdout.trim();
-}
-
-function authUrl(token: string, repo: { owner: string; repo: string }): string {
-  return `https://x-access-token:${token}@github.com/${repo.owner}/${repo.repo}.git`;
-}
-
-// Clone the downstream repo into downstream-path, as a treeless partial clone
-// with full history. We skip the initial checkout since we immediately check
-// out a specific commit afterward.
-async function cloneDownstreamRepo(): Promise<void> {
-  core.info(`Cloning ${downstreamRepo.owner}/${downstreamRepo.repo}...`);
-  await exec.exec("git", [
-    ...["clone", "--quiet", "--filter=tree:0", "--no-checkout"],
-    ...[authUrl(downstreamToken, downstreamRepo), downstreamPath],
-  ]);
+function authUrl(token: string, repo: Repo): string {
+  return `https://x-access-token:${token}@github.com/${repo.fullName}.git`;
 }
 
 async function loadBuildReport(): Promise<BuildReport> {
@@ -96,24 +89,46 @@ async function loadBuildReport(): Promise<BuildReport> {
   return JSON.parse(raw) as BuildReport;
 }
 
+function isBuildReportGreen(report: BuildReport): boolean {
+  const repoEntry = report.repos.find((r) => r.name === subrepo);
+  return repoEntry?.green ?? false;
+}
+
+async function findExportPr(): Promise<number | null> {
+  const pr = await findPrFor(targetOcto, targetRepo, prBranch, {
+    state: "open",
+    headOwner: prRepo.owner,
+  });
+  return pr?.number ?? null;
+}
+
+// Clone the downstream repo as a blobless partial clone with full history.
+async function cloneDownstreamRepo(): Promise<void> {
+  core.info(`Cloning ${downstreamRepo.fullName}...`);
+  await exec.exec("git", [
+    ...["clone", "--quiet", "--filter=blob:none", "--no-checkout"],
+    ...[authUrl(downstreamToken, downstreamRepo), clonePath],
+  ]);
+}
+
 // Check whether the tracking branch is a true ancestor (i.e. not identical to)
 // the specified commit hash. If the tracking branch does not exist yet (e.g. on
 // the first export), we treat it as an ancestor.
 async function trackingBranchIsTrueAncestor(sha: string): Promise<boolean> {
-  const verifyExitCode = await dRun(
+  const verifyExitCode = await cRun(
     "git",
     ["rev-parse", "--verify", "--quiet", `origin/${trackingBranch}`],
     { ignoreReturnCode: true, silent: true },
   );
   if (verifyExitCode !== 0) return true;
 
-  const trackingSha = await dCapture("git", [
+  const trackingSha = await cCapture("git", [
     "rev-parse",
     `origin/${trackingBranch}`,
   ]);
   if (trackingSha === sha) return false;
 
-  const exitCode = await dRun(
+  const exitCode = await cRun(
     "git",
     ["merge-base", "--is-ancestor", trackingSha, sha],
     { ignoreReturnCode: true },
@@ -121,116 +136,214 @@ async function trackingBranchIsTrueAncestor(sha: string): Promise<boolean> {
   return exitCode === 0;
 }
 
-// Run split.py and return whether there was anything to export.
-async function prepareExportBranch(): Promise<boolean> {
-  const exitCode = await dRun(
-    "python",
+type BaseCommit = {
+  repo: string;
+  url: string;
+  rev: string;
+  sha: string;
+};
+
+async function findBaseCommit(): Promise<BaseCommit> {
+  const result = await cCapture(scriptPath("internal_find_base_commit.py"), [
+    ".",
+    subrepo,
+  ]);
+  return JSON.parse(result) as BaseCommit;
+}
+
+// The subrepo's rev from repos.toml, i.e. its current source branch.
+async function findSourceRev(): Promise<string> {
+  const result = await cCapture(scriptPath("list.py"), [
+    ...[".", "--json", subrepo],
+  ]);
+  assert(result !== "", `Subrepo ${subrepo} not found in repos.toml`);
+  return (JSON.parse(result) as { rev: string }).rev;
+}
+
+// Fetch parts of a repo. Uses a blobless partial clone with full history since
+// we may need to create merge commits. Returns the fetched sha.
+async function fetchFromRepo(
+  repo: Repo,
+  token: string,
+  revOrSha: string,
+): Promise<string> {
+  core.info(`Fetching ${revOrSha} from ${repo.fullName}...`);
+  await cRun("git", [
+    ...["fetch", "--quiet", "--filter=blob:none"],
+    ...[authUrl(token, repo), revOrSha],
+  ]);
+  return await cCapture("git", [
+    ...["rev-parse", "--verify", "--quiet"],
+    "FETCH_HEAD^{commit}",
+  ]);
+}
+
+async function pushToRepo(
+  repo: Repo,
+  token: string,
+  sha: string,
+  branch: string,
+  force: boolean = false,
+): Promise<void> {
+  await cRun("git", [
+    "push",
+    ...(force ? ["--force"] : []),
+    authUrl(token, repo),
+    `${sha}:refs/heads/${branch}`,
+  ]);
+}
+
+function isNonemptyExport(exitCode: number): boolean {
+  if (exitCode === 10 /* EXIT_EMPTY */) {
+    return false; // Exit code returned by --fail-if-empty when empty
+  } else if (exitCode === 0) {
+    return true; // Successful export, so there are changes
+  } else {
+    abort(`export.py exited with code ${exitCode}`);
+  }
+}
+
+async function runExport(onto: string): Promise<boolean> {
+  const exitCode = await cRun(
+    scriptPath("export.py"),
     [
-      ...[".downstream/split.py", ".", subrepo],
-      ...["-m", prTitle, "--rebase", "--fail-if-empty"],
+      ...[".", subrepo, "--fail-if-empty"],
+      ...["--onto", onto],
+      ...["--message", prTitle],
+      ...(updateToolchains ? ["--update-toolchains"] : []),
+      ...lakefileEdits.flatMap(([p, r]) => ["--edit-lakefile", p, r]),
+      ...(updateManifests ? ["--update-manifests"] : []),
     ],
     { ignoreReturnCode: true },
   );
 
-  if (exitCode === 11 /* EXIT_REBASE_FAILED */) {
-    // If the changes can't be rebased cleanly, our PR will be outdated as soon
-    // as it is opened. This can happen for example if a previous export PR has
-    // just been merged but the changes have not yet made their way into the
-    // downstream repo via an update. In this situation, if we didn't check for
-    // rebaseability, we'd just re-open the same PR again.
-    exit("split.py failed to rebase");
-  } else if (exitCode === 10 /* EXIT_EMPTY */) {
-    return false; // Exit code returned by --fail-if-empty when empty
-  } else if (exitCode === 0) {
-    return true; // Successful split, so there are changes
-  } else {
-    abort(`split.py exited with code ${exitCode}`);
-  }
+  return isNonemptyExport(exitCode);
 }
 
-async function pushToPushBranch(force: boolean): Promise<void> {
-  await dRun("git", [
-    "push",
-    ...(force ? ["--force"] : []),
-    authUrl(pushToken, pushRepo),
-    `HEAD:refs/heads/${pushBranch}`,
+async function updateSubrepo(sha: string): Promise<string | null> {
+  await cRun("git", ["switch", "--detach", sha]);
+
+  // Fetch both commits ourselves, update.py would fetch them shallowly.
+  const baseCommit = await findBaseCommit();
+  const sourceRev = await findSourceRev();
+
+  await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
+  const sourceSha = await fetchFromRepo(sourceRepo, sourceToken, sourceRev);
+
+  await cRun(scriptPath("update.py"), [
+    ...[".", "--update", subrepo, "--update-to", subrepo, sourceSha],
   ]);
+  const exitCode = await cRun("git", ["diff", "--quiet", sha, "HEAD"], {
+    ignoreReturnCode: true,
+  });
+  if (exitCode !== 0) return null;
+  return await cCapture("git", ["rev-parse", "HEAD"]);
 }
 
-async function createExportPr(target: TargetOpts): Promise<number> {
-  core.info("Creating export PR...");
-  const { data } = await target.octo.rest.pulls.create({
-    ...target.repo,
-    base: target.branch,
-    head: `${pushRepo.owner}:${pushBranch}`,
+async function exportSameBranch(sha: string): Promise<boolean> {
+  await cRun("git", ["switch", "--detach", sha]);
+  const baseCommit = await findBaseCommit();
+  const baseSha = await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
+  return await runExport(baseSha);
+}
+
+async function exportTargetBranch(sha: string): Promise<boolean> {
+  await cRun("git", ["switch", "--detach", sha]);
+  const baseCommit = await findBaseCommit();
+  // Make sure to fetch both, else the merge may fail to find the sha
+  const baseSha = await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
+  const targetSha = await fetchFromRepo(targetRepo, targetToken, targetBranch);
+
+  // Merge source branch, resolving conflicts in favor of the source branch
+  await cRun("git", ["switch", "--detach", targetSha]);
+  await cRun("git", [
+    ...["merge", "--strategy-option=theirs", baseSha],
+    ...["-m", `chore: merge '${baseCommit.rev}'`],
+  ]);
+  const mergeSha = await cCapture("git", ["rev-parse", "HEAD"]);
+
+  // Export downstream changes on top
+  await cRun("git", ["switch", "--detach", sha]);
+  const nonempty = await runExport(mergeSha);
+
+  // Push merge commit now, to prepare the branch for the export PR
+  if (nonempty && pr)
+    await pushToRepo(targetRepo, targetToken, mergeSha, targetBranch);
+
+  return nonempty;
+}
+
+async function createExportPr(): Promise<number> {
+  await pushToRepo(prRepo, prToken, "HEAD", prBranch, true);
+
+  let body = prBody ?? "";
+  if (prExplanation) body += `\n\n${prExplanation}`;
+
+  const { data } = await targetOcto.rest.pulls.create({
+    ...targetRepo,
+    base: targetBranch,
+    head: `${prRepo.owner}:${prBranch}`,
     title: prTitle,
-    body: prBody ?? undefined,
+    body,
   });
-  core.info(`Created export PR #${data.number}`);
+
   return data.number;
 }
 
-async function advanceTrackingBranch(sha: string): Promise<void> {
-  await dRun("git", ["push", "origin", `${sha}:refs/heads/${trackingBranch}`]);
-}
-
 async function run(): Promise<void> {
-  core.setOutput("pushed", "false");
-  core.setOutput("created", "false");
+  core.setOutput("pr-created", false);
 
+  // Don't export broken changes.
   const buildReport = await loadBuildReport();
+  if (!isBuildReportGreen(buildReport))
+    exit("Build report is not green, stopping.");
 
-  // Only once the subrepo exists and builds correctly are the changes worth
-  // exporting.
-  const repoEntry = buildReport.repos.find((r) => r.name === subrepo);
-  if (!repoEntry?.green) {
-    exit(`Subrepo "${subrepo}" is not green, nothing to export.`);
-  }
-
-  // In PR mode, we don't want to touch the export branch as long as an open PR
-  // exists since that would modify the PR.
-  if (target !== undefined) {
-    const existingPr = await findPrFor(target.octo, target.repo, pushBranch, {
-      state: "open",
-      headOwner: pushRepo.owner,
-    });
-    if (existingPr !== undefined) {
-      core.setOutput("number", String(existingPr.number));
-      exit(`Export PR #${existingPr.number} already exists.`);
+  // Don't export if a PR already exists.
+  if (pr) {
+    const prNumber = await findExportPr();
+    if (prNumber !== null) {
+      core.setOutput("pr-number", prNumber);
+      exit(`Export PR #${prNumber} already exists, stopping.`);
     }
   }
 
-  // Delaying the clone until we need it to avoid unnecessary overhead.
+  // Delay cloning downstream repo until now since it can be expensive.
   await cloneDownstreamRepo();
 
-  // We use the tracking branch to avoid re-doing work, and to avoid
-  // out-of-order exports in the case that CI checks a newer commit before an
-  // older commit.
+  // The tracking branch is used to avoid out-of-order exports and to avoid
+  // unnecessary work.
   const isAncestor = await trackingBranchIsTrueAncestor(buildReport.commit_sha);
-  if (!isAncestor) {
-    exit(
-      `Tracking branch "${trackingBranch}" must be a (true) ancestor of ${buildReport.commit_sha}.`,
-    );
-  }
+  if (!isAncestor) exit(`Tracking branch ${trackingBranch} too new, stopping.`);
 
-  // Create the export branch
-  await dRun("git", ["checkout", buildReport.commit_sha]);
-  const hasChanges = await prepareExportBranch();
-  if (hasChanges) {
-    if (target === undefined) {
-      // Push directly to the push branch
-      await pushToPushBranch(false);
-      core.setOutput("pushed", "true");
+  // Ensure there are no relevant upstream changes since our last update,
+  // otherwise we'd sometimes do unnecessary work like opening a new export PR
+  // immediately after the last one was merged.
+  const updatedSha = await updateSubrepo(buildReport.commit_sha);
+  if (updatedSha === null) exit(`Subrepo ${subrepo} is outdated, stopping.`);
+
+  const nonempty =
+    method === "same-branch"
+      ? await exportSameBranch(updatedSha)
+      : await exportTargetBranch(updatedSha);
+
+  // Create export PR or push to target branch, depending on settings
+  if (nonempty) {
+    if (pr) {
+      const prNumber = await createExportPr();
+      core.setOutput("pr-created", true);
+      core.setOutput("pr-number", prNumber);
     } else {
-      // Create the export PR
-      await pushToPushBranch(true);
-      const number = await createExportPr(target);
-      core.setOutput("created", "true");
-      core.setOutput("number", String(number));
+      await pushToRepo(targetRepo, targetToken, "HEAD", targetBranch);
     }
   }
 
-  await advanceTrackingBranch(buildReport.commit_sha);
+  // Advance tracking branch
+  await pushToRepo(
+    downstreamRepo,
+    downstreamToken,
+    buildReport.commit_sha,
+    trackingBranch,
+  );
 }
 
 run().catch((error) => {
