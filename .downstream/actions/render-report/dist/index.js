@@ -24366,7 +24366,8 @@ function parseLimitedTo(value) {
     value.split(",").map((name) => name.trim()).filter((name) => name.length > 0)
   );
 }
-function status(phase) {
+function status(phase, blockedBy = []) {
+  if (blockedBy.length > 0) return `\u{1F6D1} by ${blockedBy.join(", ")}`;
   if (phase.success === null) return "\u23ED\uFE0F";
   const icon = phase.success ? "\u2705" : "\u{1F7E5}";
   if (phase.duration === null) return icon;
@@ -24379,7 +24380,7 @@ function renderTable(repos) {
   ];
   for (const repo of repos) {
     const critical = repo.critical ? "\u2705" : "";
-    const build = status(repo.build);
+    const build = status(repo.build, repo.blocked_by);
     const test = status(repo.test);
     const lint = status(repo.lint);
     lines.push(`| ${repo.name} | ${critical} | ${build} | ${test} | ${lint} |`);
