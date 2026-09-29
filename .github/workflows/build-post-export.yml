@@ -268,3 +268,7 @@ jobs:
           pr-branch: test-downstream-lean4-export
           pr-title: |-
             chore: downstream-lean4 adaptations for ${{ steps.toolchain.outputs.toolchain }}
+          update-toolchains: true
+          update-manifests: true
+          lakefile-edits: |
+            ^git = "https://github\.com/leanprover-community/mathlib4(?:-nightly-testing)?"\nrev = ".*"$ -> git = "https://github.com/leanprover-community/mathlib4-nightly-testing"\nrev = "nightly-testing"
