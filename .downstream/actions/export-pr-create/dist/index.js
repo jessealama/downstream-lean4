@@ -25200,7 +25200,7 @@ async function findBaseCommit() {
 }
 async function findSourceRev() {
   const result = await cCapture(scriptPath("list.py"), [
-    ...[".", "--json", subrepo]
+    ...[".", subrepo, "--json"]
   ]);
   assert(result !== "", `Subrepo ${subrepo} not found in repos.toml`);
   return JSON.parse(result).rev;

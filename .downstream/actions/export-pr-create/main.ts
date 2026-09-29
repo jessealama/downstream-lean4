@@ -154,7 +154,7 @@ async function findBaseCommit(): Promise<BaseCommit> {
 // The subrepo's rev from repos.toml, i.e. its current source branch.
 async function findSourceRev(): Promise<string> {
   const result = await cCapture(scriptPath("list.py"), [
-    ...[".", "--json", subrepo],
+    ...[".", subrepo, "--json"],
   ]);
   assert(result !== "", `Subrepo ${subrepo} not found in repos.toml`);
   return (JSON.parse(result) as { rev: string }).rev;
