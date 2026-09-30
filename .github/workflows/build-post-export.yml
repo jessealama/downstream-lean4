@@ -251,6 +251,11 @@ jobs:
           TOOLCHAIN=${TOOLCHAIN#leanprover/lean4:}
           echo "toolchain=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
+      - name: Install elan
+        run: |
+          curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
       - name: Create export PR
         id: export-pr
         uses: ./.downstream/actions/export-pr-create
