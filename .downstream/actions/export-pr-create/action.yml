@@ -135,9 +135,9 @@ inputs:
       true.
     default: >
       If any dependencies have open export PRs themselves, you may need to merge
-      them and run `lake update` in this PR before CI turns green. If this PR
-      becomes outdated, just close it and a new one will be opened soon. No new
-      export PRs will be opened while one is already open.
+      them first and then run `lake update` in this PR. If this PR becomes
+      outdated, just close it and a new one will be opened soon. No new export
+      PRs will be opened while one is already open.
 
   ##################
   # Export options #
