@@ -126,12 +126,18 @@ inputs:
 
   pr-body:
     description: >
-      Body for the export PR. Only used if `pr` is true.
+      Body for the export PR. Only used if `pr` is true. Defaults to a message
+      linking to the commit the export was based on.
 
   pr-explanation:
     description: >
       Explanation for the export PR (comes after the body). Only used if `pr` is
       true.
+    default: >
+      If any dependencies have open export PRs themselves, you may need to merge
+      them and run `lake update` in this PR before CI turns green. If this PR
+      becomes outdated, just close it and a new one will be opened soon. No new
+      export PRs will be opened while one is already open.
 
   ##################
   # Export options #

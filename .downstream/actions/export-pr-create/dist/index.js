@@ -25286,9 +25286,13 @@ async function exportTargetBranch(sha) {
     await pushToRepo(targetRepo, targetToken, mergeSha, targetBranch);
   return nonempty;
 }
-async function createExportPr() {
+async function createExportPr(buildReport) {
   await pushToRepo(prRepo, prToken, "HEAD", prBranch, true);
-  let body = prBody ?? "";
+  let body = prBody;
+  if (!body) {
+    body = "This PR contains automatically exported adaptations up until ";
+    body += `https://github.com/${downstreamRepo.fullName}/commit/${buildReport.commit_sha}.`;
+  }
   if (prExplanation) body += `
 
 ${prExplanation}`;
@@ -25321,7 +25325,7 @@ async function run() {
   const nonempty = method === "same-branch" ? await exportSameBranch(updatedSha) : await exportTargetBranch(updatedSha);
   if (nonempty) {
     if (pr) {
-      const prNumber = await createExportPr();
+      const prNumber = await createExportPr(buildReport);
       setOutput("pr-created", true);
       setOutput("pr-number", prNumber);
     } else {

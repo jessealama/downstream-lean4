@@ -273,10 +273,15 @@ async function exportTargetBranch(sha: string): Promise<boolean> {
   return nonempty;
 }
 
-async function createExportPr(): Promise<number> {
+async function createExportPr(buildReport: BuildReport): Promise<number> {
   await pushToRepo(prRepo, prToken, "HEAD", prBranch, true);
 
-  let body = prBody ?? "";
+  let body = prBody;
+  if (!body) {
+    // Default body
+    body = "This PR contains automatically exported adaptations up until ";
+    body += `https://github.com/${downstreamRepo.fullName}/commit/${buildReport.commit_sha}.`;
+  }
   if (prExplanation) body += `\n\n${prExplanation}`;
 
   const { data } = await targetOcto.rest.pulls.create({
@@ -329,7 +334,7 @@ async function run(): Promise<void> {
   // Create export PR or push to target branch, depending on settings
   if (nonempty) {
     if (pr) {
-      const prNumber = await createExportPr();
+      const prNumber = await createExportPr(buildReport);
       core.setOutput("pr-created", true);
       core.setOutput("pr-number", prNumber);
     } else {
