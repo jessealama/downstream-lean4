@@ -214,4 +214,4 @@ jobs:
           update-toolchains: true
           update-manifests: true
           lakefile-edits: |
-            ^git = "https://github\.com/leanprover-community/mathlib4(?:-nightly-testing)?"\nrev = ".*"$ -> git = "https://github.com/leanprover-community/mathlib4-nightly-testing"\nrev = "nightly-testing"
+            ^name = "mathlib"\nscope = "leanprover-community"\nrev = ".*"$ -> name = "mathlib"\ngit = "https://github.com/leanprover-community/mathlib4-nightly-testing"\nrev = "nightly-testing"
