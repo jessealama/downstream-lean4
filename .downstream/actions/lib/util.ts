@@ -11,8 +11,14 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function exit(reason: string): never {
-  core.info(`Exiting: ${reason}`);
+export function exit(
+  reason: string,
+  level: "info" | "notice" | "warning" = "info",
+): never {
+  if (level === "warning") core.warning(reason);
+  else if (level === "notice") core.notice(reason);
+  else core.info(reason);
+
   process.exit(0);
 }
 

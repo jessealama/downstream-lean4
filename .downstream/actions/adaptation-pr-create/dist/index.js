@@ -20930,6 +20930,12 @@ function setFailed(message) {
 function error(message, properties = {}) {
   issueCommand("error", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
+function warning(message, properties = {}) {
+  issueCommand("warning", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
+function notice(message, properties = {}) {
+  issueCommand("notice", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
 function info(message) {
   process.stdout.write(message + os5.EOL);
 }
@@ -25020,8 +25026,10 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // actions/lib/util.ts
-function exit(reason) {
-  info(`Exiting: ${reason}`);
+function exit(reason, level = "info") {
+  if (level === "warning") warning(reason);
+  else if (level === "notice") notice(reason);
+  else info(reason);
   process.exit(0);
 }
 function abort(reason) {

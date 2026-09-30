@@ -12,6 +12,7 @@ import {
   captureIn,
   exit,
   findPrFor,
+  ListPr,
   Repo,
   runIn,
 } from "../lib/util";
@@ -94,12 +95,11 @@ function isBuildReportGreen(report: BuildReport): boolean {
   return repoEntry?.green ?? false;
 }
 
-async function findExportPr(): Promise<number | null> {
-  const pr = await findPrFor(targetOcto, targetRepo, prBranch, {
+async function findExportPr(): Promise<ListPr | undefined> {
+  return await findPrFor(targetOcto, targetRepo, prBranch, {
     state: "open",
     headOwner: prRepo.owner,
   });
-  return pr?.number ?? null;
 }
 
 // Clone the downstream repo as a blobless partial clone with full history.
@@ -120,12 +120,16 @@ async function trackingBranchIsTrueAncestor(sha: string): Promise<boolean> {
     ["rev-parse", "--verify", "--quiet", `origin/${trackingBranch}`],
     { ignoreReturnCode: true, silent: true },
   );
-  if (verifyExitCode !== 0) return true;
+  if (verifyExitCode !== 0) {
+    core.info(`Tracking branch ${trackingBranch} does not exist yet.`);
+    return true;
+  }
 
   const trackingSha = await cCapture("git", [
     "rev-parse",
     `origin/${trackingBranch}`,
   ]);
+  core.info(`Tracking branch ${trackingBranch} is at ${trackingSha}.`);
   if (trackingSha === sha) return false;
 
   const exitCode = await cRun(
@@ -204,6 +208,7 @@ function isNonemptyExport(exitCode: number): boolean {
 }
 
 async function runExport(onto: string): Promise<boolean> {
+  core.info(`Exporting ${subrepo} onto ${onto}...`);
   const exitCode = await cRun(
     scriptPath("export.py"),
     [
@@ -230,6 +235,7 @@ async function updateSubrepo(sha: string): Promise<string | null> {
   await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
   const sourceSha = await fetchFromRepo(sourceRepo, sourceToken, sourceRev);
 
+  core.info(`Updating subrepo ${subrepo} to ${sourceRev} (${sourceSha})...`);
   await cRun(scriptPath("update.py"), [
     ...[".", "--update", subrepo, "--update-to", subrepo, sourceSha],
   ]);
@@ -255,6 +261,7 @@ async function exportTargetBranch(sha: string): Promise<boolean> {
   const targetSha = await fetchFromRepo(targetRepo, targetToken, targetBranch);
 
   // Merge source branch, resolving conflicts in favor of the source branch
+  core.info(`Merging ${baseCommit.rev} (${baseSha}) into ${targetBranch}...`);
   await cRun("git", ["switch", "--detach", targetSha]);
   await cRun("git", [
     ...["merge", "--strategy-option=theirs", baseSha],
@@ -267,13 +274,16 @@ async function exportTargetBranch(sha: string): Promise<boolean> {
   const nonempty = await runExport(mergeSha);
 
   // Push merge commit now, to prepare the branch for the export PR
-  if (nonempty && pr)
+  if (nonempty && pr) {
+    core.info(`Pushing merge commit ${mergeSha} to ${targetBranch}...`);
     await pushToRepo(targetRepo, targetToken, mergeSha, targetBranch);
+  }
 
   return nonempty;
 }
 
 async function createExportPr(buildReport: BuildReport): Promise<number> {
+  core.info(`Pushing export commit(s) to ${prRepo.fullName}:${prBranch}...`);
   await pushToRepo(prRepo, prToken, "HEAD", prBranch, true);
 
   let body = prBody;
@@ -284,6 +294,9 @@ async function createExportPr(buildReport: BuildReport): Promise<number> {
   }
   if (prExplanation) body += `\n\n${prExplanation}`;
 
+  core.info(
+    `Creating export PR against ${targetRepo.fullName}:${targetBranch}...`,
+  );
   const { data } = await targetOcto.rest.pulls.create({
     ...targetRepo,
     base: targetBranch,
@@ -292,6 +305,7 @@ async function createExportPr(buildReport: BuildReport): Promise<number> {
     body,
   });
 
+  core.notice(`Created export PR #${data.number}: ${data.html_url}`);
   return data.number;
 }
 
@@ -301,15 +315,19 @@ async function run(): Promise<void> {
   // Don't export broken changes.
   const buildReport = await loadBuildReport();
   if (!isBuildReportGreen(buildReport))
-    exit("Build report is not green, stopping.");
+    exit(`Build report for ${subrepo} is not green, stopping.`, "notice");
 
   // Don't export if a PR already exists.
   if (pr) {
-    const prNumber = await findExportPr();
-    if (prNumber !== null) {
-      core.setOutput("pr-number", prNumber);
-      exit(`Export PR #${prNumber} already exists, stopping.`);
+    const existingPr = await findExportPr();
+    if (existingPr !== undefined) {
+      core.setOutput("pr-number", existingPr.number);
+      exit(
+        `Export PR #${existingPr.number} already exists, stopping: ${existingPr.html_url}`,
+        "notice",
+      );
     }
+    core.info("No open export PR found.");
   }
 
   // Delay cloning downstream repo until now since it can be expensive.
@@ -318,14 +336,23 @@ async function run(): Promise<void> {
   // The tracking branch is used to avoid out-of-order exports and to avoid
   // unnecessary work.
   const isAncestor = await trackingBranchIsTrueAncestor(buildReport.commit_sha);
-  if (!isAncestor) exit(`Tracking branch ${trackingBranch} too new, stopping.`);
+  if (!isAncestor)
+    exit(
+      `Tracking branch ${trackingBranch} is not a true ancestor of ${buildReport.commit_sha} (already exported or newer), stopping.`,
+      "notice",
+    );
 
   // Ensure there are no relevant upstream changes since our last update,
   // otherwise we'd sometimes do unnecessary work like opening a new export PR
   // immediately after the last one was merged.
   const updatedSha = await updateSubrepo(buildReport.commit_sha);
-  if (updatedSha === null) exit(`Subrepo ${subrepo} is outdated, stopping.`);
+  if (updatedSha === null)
+    exit(
+      `Subrepo ${subrepo} is outdated (upstream has relevant changes since the last update), stopping.`,
+      "notice",
+    );
 
+  core.info(`Exporting using method "${method}"...`);
   const nonempty =
     method === "same-branch"
       ? await exportSameBranch(updatedSha)
@@ -339,10 +366,22 @@ async function run(): Promise<void> {
       core.setOutput("pr-number", prNumber);
     } else {
       await pushToRepo(targetRepo, targetToken, "HEAD", targetBranch);
+      core.notice(
+        `Pushed export directly to ${targetRepo.fullName}:${targetBranch}.`,
+      );
     }
+  } else {
+    core.notice(
+      pr
+        ? "Export is empty, not creating an export PR."
+        : "Export is empty, nothing to push.",
+    );
   }
 
   // Advance tracking branch
+  core.info(
+    `Advancing tracking branch ${trackingBranch} to ${buildReport.commit_sha}...`,
+  );
   await pushToRepo(
     downstreamRepo,
     downstreamToken,

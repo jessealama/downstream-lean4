@@ -24366,12 +24366,18 @@ function parseLimitedTo(value) {
     value.split(",").map((name) => name.trim()).filter((name) => name.length > 0)
   );
 }
+function renderDuration(duration) {
+  duration = Math.round(duration);
+  const minutes = Math.floor(duration / 60);
+  const seconds = duration - minutes * 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
 function status(phase, blockedBy = []) {
   if (blockedBy.length > 0) return `\u{1F6D1} by ${blockedBy.join(", ")}`;
   if (phase.success === null) return "\u23ED\uFE0F";
   const icon = phase.success ? "\u2705" : "\u{1F7E5}";
   if (phase.duration === null) return icon;
-  return `${icon} in ${Math.round(phase.duration)}s`;
+  return `${icon} in ${renderDuration(phase.duration)}`;
 }
 function renderTable(repos) {
   const lines = [

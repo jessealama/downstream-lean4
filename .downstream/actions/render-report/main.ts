@@ -48,12 +48,19 @@ function parseLimitedTo(value: string | null): Set<string> | null {
   );
 }
 
+function renderDuration(duration: number): string {
+  duration = Math.round(duration);
+  const minutes = Math.floor(duration / 60);
+  const seconds = duration - minutes * 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 function status(phase: BuildReportPhase, blockedBy: string[] = []): string {
   if (blockedBy.length > 0) return `🛑 by ${blockedBy.join(", ")}`;
   if (phase.success === null) return "⏭️";
   const icon = phase.success ? "✅" : "🟥";
   if (phase.duration === null) return icon;
-  return `${icon} in ${Math.round(phase.duration)}s`;
+  return `${icon} in ${renderDuration(phase.duration)}`;
 }
 
 function renderTable(repos: BuildReportRepo[]): string[] {
