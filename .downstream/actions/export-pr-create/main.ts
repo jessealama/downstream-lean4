@@ -247,7 +247,17 @@ async function updateSubrepo(sha: string): Promise<string | null> {
 }
 
 async function exportSameBranch(sha: string): Promise<boolean> {
-  await cRun("git", ["switch", "--detach", sha]);
+  // Ensure there are no relevant upstream changes since our last update,
+  // otherwise we'd sometimes do unnecessary work like opening a new export PR
+  // immediately after the last one was merged.
+  const updatedSha = await updateSubrepo(sha);
+  if (updatedSha === null)
+    exit(
+      `Subrepo ${subrepo} is outdated (upstream has relevant changes since the last update), stopping.`,
+      "notice",
+    );
+
+  await cRun("git", ["switch", "--detach", updatedSha]);
   const baseCommit = await findBaseCommit();
   const baseSha = await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
   return await runExport(baseSha);
@@ -376,21 +386,11 @@ async function run(): Promise<void> {
       "notice",
     );
 
-  // Ensure there are no relevant upstream changes since our last update,
-  // otherwise we'd sometimes do unnecessary work like opening a new export PR
-  // immediately after the last one was merged.
-  const updatedSha = await updateSubrepo(buildReport.commit_sha);
-  if (updatedSha === null)
-    exit(
-      `Subrepo ${subrepo} is outdated (upstream has relevant changes since the last update), stopping.`,
-      "notice",
-    );
-
   core.info(`Exporting using method "${method}"...`);
   const nonempty =
     method === "same-branch"
-      ? await exportSameBranch(updatedSha)
-      : await exportTargetBranch(updatedSha);
+      ? await exportSameBranch(buildReport.commit_sha)
+      : await exportTargetBranch(buildReport.commit_sha);
 
   // Create export PR or push to target branch, depending on settings
   if (nonempty) {

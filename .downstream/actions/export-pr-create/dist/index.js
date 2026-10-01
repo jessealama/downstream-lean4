@@ -25277,7 +25277,13 @@ async function updateSubrepo(sha) {
   return await cCapture("git", ["rev-parse", "HEAD"]);
 }
 async function exportSameBranch(sha) {
-  await cRun("git", ["switch", "--detach", sha]);
+  const updatedSha = await updateSubrepo(sha);
+  if (updatedSha === null)
+    exit(
+      `Subrepo ${subrepo} is outdated (upstream has relevant changes since the last update), stopping.`,
+      "notice"
+    );
+  await cRun("git", ["switch", "--detach", updatedSha]);
   const baseCommit = await findBaseCommit();
   const baseSha = await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
   return await runExport(baseSha);
@@ -25374,14 +25380,8 @@ async function run() {
       `Tracking branch ${trackingBranch} is not a true ancestor of ${buildReport.commit_sha} (already exported or newer), stopping.`,
       "notice"
     );
-  const updatedSha = await updateSubrepo(buildReport.commit_sha);
-  if (updatedSha === null)
-    exit(
-      `Subrepo ${subrepo} is outdated (upstream has relevant changes since the last update), stopping.`,
-      "notice"
-    );
   info(`Exporting using method "${method}"...`);
-  const nonempty = method === "same-branch" ? await exportSameBranch(updatedSha) : await exportTargetBranch(updatedSha);
+  const nonempty = method === "same-branch" ? await exportSameBranch(buildReport.commit_sha) : await exportTargetBranch(buildReport.commit_sha);
   if (nonempty) {
     if (pr) {
       const prNumber = await createExportPr(buildReport);
