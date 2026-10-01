@@ -25282,6 +25282,34 @@ async function exportSameBranch(sha) {
   const baseSha = await fetchFromRepo(sourceRepo, sourceToken, baseCommit.sha);
   return await runExport(baseSha);
 }
+function excludePathspecs() {
+  const patterns = [];
+  if (updateToolchains) patterns.push("lean-toolchain");
+  if (lakefileEdits.length > 0) patterns.push("lakefile.toml", "lakefile.lean");
+  if (updateManifests) patterns.push("lake-manifest.json");
+  return patterns.map((p) => `:(glob)**/${p}`);
+}
+async function mergeSource(sha, message) {
+  const pathspecs = excludePathspecs();
+  const beforeSha = await cCapture("git", ["rev-parse", "HEAD"]);
+  await cRun("git", [
+    ...["merge", "--no-ff", "--strategy-option=theirs", sha],
+    ...["-m", message]
+  ]);
+  if (pathspecs.length === 0) return;
+  const changed = await cCapture("git", [
+    ...["diff", "--name-only", "-z", "--diff-filter=M", beforeSha, "HEAD"],
+    ...["--", ...pathspecs]
+  ]);
+  const changedPaths = changed.split("\0").filter((p) => p !== "");
+  if (changedPaths.length === 0) return;
+  info(`Keeping target version of ${changedPaths.join(", ")}`);
+  await cRun("git", [
+    ...["--literal-pathspecs", "checkout", beforeSha, "--"],
+    ...changedPaths
+  ]);
+  await cRun("git", ["commit", "--amend", "--no-edit"]);
+}
 async function exportTargetBranch(sha) {
   await cRun("git", ["switch", "--detach", sha]);
   const baseCommit = await findBaseCommit();
@@ -25289,10 +25317,7 @@ async function exportTargetBranch(sha) {
   const targetSha = await fetchFromRepo(targetRepo, targetToken, targetBranch);
   info(`Merging ${baseCommit.rev} (${baseSha}) into ${targetBranch}...`);
   await cRun("git", ["switch", "--detach", targetSha]);
-  await cRun("git", [
-    ...["merge", "--strategy-option=theirs", baseSha],
-    ...["-m", `chore: merge '${baseCommit.rev}'`]
-  ]);
+  await mergeSource(baseSha, `chore: merge '${baseCommit.rev}'`);
   const mergeSha = await cCapture("git", ["rev-parse", "HEAD"]);
   await cRun("git", ["switch", "--detach", sha]);
   const nonempty = await runExport(mergeSha);

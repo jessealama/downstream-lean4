@@ -253,6 +253,43 @@ async function exportSameBranch(sha: string): Promise<boolean> {
   return await runExport(baseSha);
 }
 
+function excludePathspecs(): string[] {
+  const patterns: string[] = [];
+  if (updateToolchains) patterns.push("lean-toolchain");
+  if (lakefileEdits.length > 0) patterns.push("lakefile.toml", "lakefile.lean");
+  if (updateManifests) patterns.push("lake-manifest.json");
+  return patterns.map((p) => `:(glob)**/${p}`);
+}
+
+// Merge a commit from the source branch, resolving conflicts in favor of the
+// source, but excluding certain files that would just be unnecessarily noisy in
+// the export PR diff.
+async function mergeSource(sha: string, message: string): Promise<void> {
+  const pathspecs = excludePathspecs();
+  const beforeSha = await cCapture("git", ["rev-parse", "HEAD"]);
+
+  // Create merge commit
+  await cRun("git", [
+    ...["merge", "--no-ff", "--strategy-option=theirs", sha],
+    ...["-m", message],
+  ]);
+  if (pathspecs.length === 0) return;
+
+  const changed = await cCapture("git", [
+    ...["diff", "--name-only", "-z", "--diff-filter=M", beforeSha, "HEAD"],
+    ...["--", ...pathspecs],
+  ]);
+  const changedPaths = changed.split("\0").filter((p) => p !== "");
+  if (changedPaths.length === 0) return;
+
+  core.info(`Keeping target version of ${changedPaths.join(", ")}`);
+  await cRun("git", [
+    ...["--literal-pathspecs", "checkout", beforeSha, "--"],
+    ...changedPaths,
+  ]);
+  await cRun("git", ["commit", "--amend", "--no-edit"]);
+}
+
 async function exportTargetBranch(sha: string): Promise<boolean> {
   await cRun("git", ["switch", "--detach", sha]);
   const baseCommit = await findBaseCommit();
@@ -263,10 +300,7 @@ async function exportTargetBranch(sha: string): Promise<boolean> {
   // Merge source branch, resolving conflicts in favor of the source branch
   core.info(`Merging ${baseCommit.rev} (${baseSha}) into ${targetBranch}...`);
   await cRun("git", ["switch", "--detach", targetSha]);
-  await cRun("git", [
-    ...["merge", "--strategy-option=theirs", baseSha],
-    ...["-m", `chore: merge '${baseCommit.rev}'`],
-  ]);
+  await mergeSource(baseSha, `chore: merge '${baseCommit.rev}'`);
   const mergeSha = await cCapture("git", ["rev-parse", "HEAD"]);
 
   // Export downstream changes on top
