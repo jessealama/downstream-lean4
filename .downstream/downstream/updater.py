@@ -165,11 +165,18 @@ class Updater:
             committed = True
         return CommitStatus(empty=empty, committed=committed)
 
+    def fixup_subrepo_and_stage(self, subrepo: Subrepo) -> None:
+        self.fixup_subrepo_toolchain(subrepo)
+        self.fixup_subrepo_dependencies(subrepo)
+
+        run("git", "add", subrepo.path)
+        for override_path in subrepo.path.glob("**/.lake/package-overrides.json"):
+            run("git", "add", "--force", override_path)
+
     def fixup_subrepo_and_commit(
         self, subrepo: Subrepo, sha: str, msg: str
     ) -> CommitStatus:
-        self.fixup_subrepo_toolchain(subrepo)
-        self.fixup_subrepo_dependencies(subrepo)
+        self.fixup_subrepo_and_stage(subrepo)
 
         message = "\n".join([
             f"downstream: {msg}",
@@ -185,9 +192,6 @@ class Updater:
         except ValueError:
             base_changed = True
 
-        run("git", "add", subrepo.path)
-        for override_path in subrepo.path.glob("**/.lake/package-overrides.json"):
-            run("git", "add", "--force", override_path)
         return self.commit(message, allow_empty=base_changed)
 
     def find_latest_base_commit(self, subrepo: Subrepo) -> BaseCommit:
@@ -237,6 +241,24 @@ class Updater:
             return self.fixup_subrepo_and_commit(
                 subrepo, rev_sha, f"reset repo {subrepo.name}"
             )
+
+    # Like reset_subrepo, but from an arbitrary repo and rev, and without
+    # recording a new base commit for the subrepo.
+    def import_subrepo(
+        self, subrepo: Subrepo, url: str, rev: str, source: str | None = None
+    ) -> CommitStatus:
+        with group(f"import {subrepo.name}"):
+            self.reset()
+
+            rev_sha, rev_tree = self.fetch_sha_tree(url, rev)
+            self.restore_tree_to(rev_tree, subrepo.path)
+            self.fixup_subrepo_and_stage(subrepo)
+
+            msg = f"downstream: import repo {subrepo.name}"
+            if source:
+                msg += f" from {source}"
+            msg += f"\n\nsource sha: {rev_sha}"
+            return self.commit(msg)
 
     # If sha is given, both it and the base commit must be available locally.
     def update_subrepo(self, subrepo: Subrepo, sha: str | None = None) -> CommitStatus:
