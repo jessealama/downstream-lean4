@@ -208,7 +208,7 @@ jobs:
           update-toolchains: true
           update-manifests: true
           lakefile-edits: |
-            ^name = "mathlib"\nscope = "leanprover-community"\nrev = ".*"$ -> name = "mathlib"\ngit = "https://github.com/leanprover-community/mathlib4-nightly-testing"\nrev = "nightly-testing"
+            ^name = "mathlib"\nscope = "leanprover-community"\nrev = ".*"$ -> name = "mathlib"\ngit = "https://github.com/leanprover-community/mathlib4-nightly-testing"\nrev = "<mathlib4 sha>"
 
       - name: Post message to Zulip
         if: ${{ fromJSON(steps.export-pr.outputs.pr-created) }}
