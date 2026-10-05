@@ -143,6 +143,11 @@ inputs:
       Regex replacements to apply to all lakefiles, one per line, of the form
       `pattern -> replacement`.
 
+      Occurrences of `<REPO sha>` in the replacement are replaced by the last
+      known sha of the subrepo `REPO` in the downstream commit the export is
+      based on. Note that these commits may not yet include fixes from the
+      downstream repository.
+
   lakefile-interesting:
     description: >
       Whether a lakefile update alone is interesting enough to warrant an export

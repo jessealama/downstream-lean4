@@ -339,6 +339,15 @@ class Updater:
             text = re.sub(pattern, replacement, text, flags=re.MULTILINE)
         lakefile.write_text(text)
 
+    def resolve_sha_placeholders(self, text: str) -> str:
+        def repl(m: re.Match[str]) -> str:
+            name = m.group(1)
+            if name not in self.subrepos_by_name:
+                raise ValueError(f"unknown repo {name!r} in placeholder {m.group(0)!r}")
+            return self.find_latest_base_commit(self.subrepos_by_name[name]).sha
+
+        return re.sub(r"<([^<>\s]+) sha>", repl, text)
+
     def export(
         self,
         subrepo: Subrepo,
@@ -352,6 +361,12 @@ class Updater:
 
         our_tree = self.get_tree_in_head(subrepo.name)
         our_toolchain = Path("lean-toolchain").read_text()
+
+        # Must happen while HEAD is still the downstream commit
+        lakefile_edits = [
+            (pattern, self.resolve_sha_placeholders(replacement))
+            for pattern, replacement in (lakefile_edits or [])
+        ]
 
         base_sha = onto
         if base_sha is None:
