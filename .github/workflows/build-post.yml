@@ -319,7 +319,7 @@ jobs:
           content: ${{ steps.breakage-report-cslib.outputs.report }}
 
   report-crash:
-    if: |
+    if: |-
       ${{ !contains(github.event.workflow_run.head_commit.message, 'skip-checks: true') &&
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.event == 'push' }}
