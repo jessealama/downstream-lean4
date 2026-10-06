@@ -370,7 +370,9 @@ jobs:
         uses: ./.downstream/actions/find-original-pr
 
       - name: Post crash notice to PR
-        if: ${{ steps.original-pr.outcome == 'success' }}
+        if:
+          ${{ steps.original-pr.outcome == 'success' &&
+          steps.original-pr.outputs.sha == github.event.workflow_run.head_sha }}
         uses: ./.downstream/actions/status-message
         with:
           app-token: ${{ steps.app-token.outputs.token }}
