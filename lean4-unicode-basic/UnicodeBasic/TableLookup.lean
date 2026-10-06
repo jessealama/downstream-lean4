@@ -250,6 +250,10 @@ public def lookupName (c : UInt32) : String :=
             "TANGUT COMPONENT-" ++ i
           else if d == "<Tangut Ideograph>" then
             "TANGUT IDEOGRAPH-" ++ toHexStringRaw c
+          else if d == "<Jurchen Character>" then
+            "JURCHEN CHARACTER-" ++ toHexStringRaw c
+          else if d == "<Seal Character>" then
+            "SMALL SEAL CHARACTER-" ++ toHexStringRaw c
           else panic! s!"unknown name range {d.copy}"
         else String.Slice.copy d
       else s!"<noncharacter-{toHexStringRaw c}>"
@@ -375,7 +379,7 @@ public def lookupMath (c : UInt32) : Bool :=
   let m := CLib.oMath ||| GC.Sm.toUInt64
   CLib.lookupProp c &&& m != 0
 
-/-- Check if code point is a noncharcter code point
+/-- Check if code point is a noncharacter code point
 
   Unicode property: `Noncharacter_Code_Point` -/
 @[inline]
@@ -389,7 +393,7 @@ public def lookupNoncharacterCodePoint (c : UInt32) : Bool :=
 public def lookupTitlecase (c : UInt32) : Bool :=
   lookupGC c == GC.Lt
 
-/-- Check if code point is a uppercase letter using lookup table
+/-- Check if code point is an uppercase letter using lookup table
 
   Unicode property: `Uppercase` -/
 @[inline]
